@@ -13,6 +13,7 @@ import torchvision.transforms as transforms
 import torch
 from datetime import datetime
 from matplotlib import gridspec
+from config import RESULTS_DIR
 
 to_tensor = transforms.ToTensor()
 image_resize_transform = transforms.Resize(
@@ -625,7 +626,7 @@ def export_npy(inference_list, inference_list_edit,
     yymmdd = now.strftime("%y%m%d")
     hhmmss = now.strftime("%H%M%S")
 
-    BASE_DIR = r"D:\CXR_GUI_V4\results"
+    BASE_DIR = RESULTS_DIR
     npz_dir = _make_npz_dir(BASE_DIR, user_id, yymmdd)
     npz_path = os.path.join(npz_dir, f"{patient_id}_{hhmmss}.npz")
 
@@ -633,7 +634,8 @@ def export_npy(inference_list, inference_list_edit,
     img_dir = os.path.join(npz_dir, f"{patient_id}_{hhmmss}_images")
     os.makedirs(img_dir, exist_ok=True)
 
-    for idx, (img_arr, raw_label) in enumerate(zip(orgn_img_list or [], gallery or [])):
+    for idx, (img_arr, gallery_item) in enumerate(zip(orgn_img_list or [], gallery or [])):
+        raw_label = gallery_item[1] if isinstance(gallery_item, (list, tuple)) and len(gallery_item) >= 2 else str(gallery_item)
         true_name = _clean_gallery_label(raw_label)
         root, _ = os.path.splitext(true_name)
         save_name = f"{idx+1:02d}_{root}.png"

@@ -5,6 +5,7 @@ import os
 import re
 from utils.utils_image import files_info
 from utils.utils_back import *
+from config import DEFAULT_USER_ID
 import numpy as np
 from datetime import datetime
 from PIL import Image
@@ -117,7 +118,7 @@ def process_upload(files):
             patient_id = "Unknown"
             inference_list = []
             inference_edit = []
-            user_id_loaded = "Jung Soo Kim"
+            user_id_loaded = DEFAULT_USER_ID
             timestamp_loaded = np.datetime_as_string(np.datetime64('now'))
 
         if isinstance(inference_list, np.ndarray):
@@ -200,7 +201,7 @@ def process_upload(files):
             result[7],                        # ext_pid
             result[5],                        # ext_str
             result[6],                        # ext_cnt
-            "Jung Soo Kim",                   # user_id_loaded
+            DEFAULT_USER_ID,                   # user_id_loaded
             False,                             # file_is_npz
             result[3],                        # inference_edit
             []
@@ -251,7 +252,7 @@ with gr.Blocks(css=css) as demo:
                 )
             with gr.Column():
                 gr.Markdown("## Loaded File Information")
-                user_id_input = gr.Textbox(label="User ID", value="Jung Soo Kim", interactive=False)
+                user_id_input = gr.Textbox(label="User ID", value=DEFAULT_USER_ID, interactive=False)
                 patient_id_info = gr.Textbox(label="Patient ID", placeholder="Patient ID: Unknown")
                 file_type_info = gr.Textbox(label="File Type", placeholder="File Type: Unknown", interactive=False)
                 image_count_info = gr.Textbox(label="Image Count", placeholder="Image Count: Unknown", interactive=False)
@@ -467,4 +468,4 @@ with gr.Blocks(css=css) as demo:
     )
 
 
-demo.launch(share=True, debug=True)
+demo.launch(share=False, debug=True)

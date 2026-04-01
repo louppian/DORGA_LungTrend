@@ -14,6 +14,7 @@ from datetime import datetime
 from modules.STN import STN
 import torch.nn.functional as F
 import gdown
+from config import DEFAULT_DATETIME
 
 to_tensor = transforms.ToTensor()
 image_resize_transform = transforms.Resize((512,512), interpolation=transforms.InterpolationMode.BILINEAR)
@@ -139,7 +140,7 @@ def files_info(files):
             if file_fullname.endswith((".jpg", ".jpeg", ".png")):
                 pil_image = Image.open(file).convert("L")
                 pid = ''.join(random.choice(hex_digits) for _ in range(16))
-                dt_str = '2025-01-01 00:00:00'
+                dt_str = DEFAULT_DATETIME
             elif file_fullname.endswith((".dcm", ".dicom")):
                 dicom_data = pydicom.dcmread(file, force=True)
                 pid, dt_str = dicom_info(dicom_data)
