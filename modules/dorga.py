@@ -302,7 +302,7 @@ class DORGAFullModel(nn.Module):
         )
         logits_s3 = self.cls_head(gnn_out["h"], self.class_anchors, stage="s3")
 
-        return {"logits_s3": logits_s3, "u": u, "h": gnn_out["h"]}
+        return {"logits_s3": logits_s3, "u": u, "v":v, "rho" : rho, "h": gnn_out["h"]}
 
 
 # ═══════════════════════════════════════════════════════════

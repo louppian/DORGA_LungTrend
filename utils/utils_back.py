@@ -37,17 +37,36 @@ def switch_section(files):
 # 갤러리 선택 관련
 # ════════════════════════════════════════════════
 
-def remove_extra_numeric_prefixes(label_text: str) -> str:
-    m = re.match(r'^(\d+\.\s*)(.*)', label_text)
-    if not m:
-        return label_text.strip()
-    first_prefix = m.group(1)
-    remainder = m.group(2)
-    m2 = re.match(r'^(\d+\.\s+)(.*)', remainder)
-    while m2:
-        remainder = m2.group(2)
-        m2 = re.match(r'^(\d+\.\s+)(.*)', remainder)
-    return (first_prefix + remainder).strip()
+def strip_gallery_prefix(label_text: str) -> str:
+    """갤러리 라벨에서 '✔ 1. ' 같은 선택 표시와 번호를 모두 제거하고 원본 파일명만 반환"""
+    cleaned = re.sub(r'^[✔✓]\s*', '', label_text)
+    cleaned = re.sub(r'^\d+\.\s*', '', cleaned)
+    # 중첩된 경우 한 번 더
+    cleaned = re.sub(r'^[✔✓]\s*', '', cleaned)
+    cleaned = re.sub(r'^\d+\.\s*', '', cleaned)
+    return cleaned.strip()
+
+
+GALLERY_BORDER_COLOR = (0, 180, 255)  # 선택 테두리 색상 (BGR: 밝은 파란색)
+GALLERY_BORDER_THICKNESS = 4
+
+
+def _add_selection_border(img):
+    """갤러리 썸네일에 선택 테두리를 그린 복사본 반환"""
+    if img is None:
+        return img
+    arr = np.array(img, copy=True)
+    if arr.dtype.kind == 'f':
+        arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
+    # 그레이스케일이면 BGR로 변환
+    if arr.ndim == 2:
+        arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
+    elif arr.shape[2] == 1:
+        arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
+    h, w = arr.shape[:2]
+    t = GALLERY_BORDER_THICKNESS
+    cv2.rectangle(arr, (0, 0), (w - 1, h - 1), GALLERY_BORDER_COLOR, t)
+    return arr
 
 
 def on_select_gallery(gallery, img_list, datetime_list, selected_indices, evt: gr.SelectData):
@@ -59,8 +78,8 @@ def on_select_gallery(gallery, img_list, datetime_list, selected_indices, evt: g
     if idx < 0 or idx >= len(gallery):
         return None, None, None, None, selected_indices, gallery, False
 
-    if not hasattr(on_select_gallery, "cached_names") or len(on_select_gallery.cached_names) != len(gallery):
-        on_select_gallery.cached_names = [remove_extra_numeric_prefixes(text) for _, text in gallery]
+    # 매 선택마다 현재 라벨에서 접두사를 제거해 원본 파일명 추출
+    on_select_gallery.cached_names = [strip_gallery_prefix(text) for _, text in gallery]
 
     if idx in selected_indices:
         selected_indices.remove(idx)
@@ -74,11 +93,14 @@ def on_select_gallery(gallery, img_list, datetime_list, selected_indices, evt: g
     updated_gallery = []
     for i, (img, _) in enumerate(gallery):
         original_filename = on_select_gallery.cached_names[i]
-        if i in selected_indices:
+        is_selected = i in selected_indices
+        if is_selected:
             new_text = f"✔ {i+1}. {original_filename}"
+            display_img = _add_selection_border(img_list[i] if img_list else img)
         else:
             new_text = f"{i+1}. {original_filename}"
-        updated_gallery.append((img, new_text))
+            display_img = img_list[i] if img_list else img
+        updated_gallery.append((display_img, new_text))
     gallery_update = gr.update(value=updated_gallery)
 
     main_images = []
