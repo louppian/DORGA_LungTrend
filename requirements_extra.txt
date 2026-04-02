@@ -16,3 +16,4 @@ scikit-image==0.25.1
 transformers==4.49.0
 openpyxl
 timm
+torch-geometric==2.3.0

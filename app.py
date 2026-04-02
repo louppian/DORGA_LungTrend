@@ -2,6 +2,16 @@
 
 import warnings
 warnings.filterwarnings("ignore", message="input's size at dim=.*does not match num_features")
+warnings.filterwarnings("ignore", message="Sparse invariant checks are implicitly disabled")
+
+# gradio_client bug workaround: schema can be bool in JSON Schema
+import gradio_client.utils as _gc_utils
+_orig_json_schema = _gc_utils._json_schema_to_python_type
+def _patched_json_schema(schema, defs=None):
+    if isinstance(schema, bool):
+        return "Any"
+    return _orig_json_schema(schema, defs)
+_gc_utils._json_schema_to_python_type = _patched_json_schema
 
 import gradio as gr
 import os
@@ -524,4 +534,13 @@ with gr.Blocks(css=css) as demo:
     )
 
 
-demo.launch(server_name="127.0.0.1", server_port=7860, share=False, debug=True, inbrowser=True)
+import webbrowser, threading
+def _open_browser():
+    webbrowser.open("http://127.0.0.1:7860")
+threading.Timer(2, _open_browser).start()
+
+# Gradio health check 우회 (오프라인 환경)
+import gradio.networking as _gn
+_gn.url_ok = lambda url: True
+
+demo.launch(server_name="127.0.0.1", server_port=7860, share=False, debug=True, inbrowser=False, show_api=False)

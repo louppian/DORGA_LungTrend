@@ -56,6 +56,11 @@ GALLERY_BORDER_THICKNESS = 4
 def _add_selection_border(img):
     if img is None:
         return img
+    if isinstance(img, str):
+        try:
+            img = Image.open(img).convert("RGB")
+        except:
+            return img
     if isinstance(img, Image.Image):
         img = img.convert("RGB")
     arr = np.array(img, copy=True)
