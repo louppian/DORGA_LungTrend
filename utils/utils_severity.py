@@ -10,6 +10,8 @@ import matplotlib
 matplotlib.use('Agg')
 
 from modules.dorga import DORGAFullModel, vit_base_patch16_512
+from config import MARKOV_ALPHA
+from scipy.special import softmax
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -54,10 +56,9 @@ mask_resize_transform = transforms.Resize(
 )
 dorga_normalize = transforms.Normalize([0.56], [0.17])
 
-# DORGA ROI 순서: [RT, RB, LT, LB]
-# GUI  ROI 순서: [RT, LT, RB, LB]
-# 변환 인덱스: DORGA[0]→GUI[0], DORGA[2]→GUI[1], DORGA[1]→GUI[2], DORGA[3]→GUI[3]
-_DORGA_TO_GUI_ORDER = [0, 2, 1, 3]
+# ROI 순서: DORGA 네이티브 [RT, RB, LT, LB] — GUI도 동일하게 통일
+MARKOV_P1_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "weights", "markov_P1.npy")
+MARKOV_P1 = np.load(MARKOV_P1_PATH) if os.path.exists(MARKOV_P1_PATH) else None
 
 REL_BOXES = torch.tensor([
     [0.0, 0.0, 0.5, 0.5],   # RT (이미지 좌상단)
@@ -74,11 +75,12 @@ REL_BOXES = torch.tensor([
 def all_image_inference(images):
     """
     images: torch.Tensor [N, 1, 512, 512]
-    returns: list of list  [[RT, LT, RB, LB], ...] (GUI 순서)
+    returns: (inference, logits_np)
+        inference: list of list [[RT, RB, LT, LB], ...] (DORGA 순서)
+        logits_np: np.ndarray [N, 4, 5] — raw logits (post-hoc 보정용)
     """
     resized_images = torch.stack([image_resize_transform(img) for img in images])
 
-    # DORGA는 1채널 입력 + 정규화
     resized_images = dorga_normalize(resized_images)
     resized_images = resized_images.to(device)
 
@@ -88,14 +90,46 @@ def all_image_inference(images):
     with torch.no_grad():
         out = model(resized_images, rel)
 
-    # logits_s3: [B, 4, 5] → argmax → [B, 4] (DORGA 순서: RT, RB, LT, LB)
-    preds = out["logits_s3"].argmax(-1)
-
-    # GUI 순서로 재정렬: [RT, LT, RB, LB]
-    preds = preds[:, _DORGA_TO_GUI_ORDER]
+    logits = out["logits_s3"]  # [B, 4, 5]
+    preds = logits.argmax(-1)  # [B, 4] (DORGA 순서: RT, RB, LT, LB)
 
     inference = preds.cpu().numpy().tolist()
-    return inference
+    logits_np = logits.cpu().numpy()
+    return inference, logits_np
+
+
+def apply_posthoc_correction(logits_np, user_edit_history, alpha=None):
+    """
+    logits_np: np.ndarray [N, 4, 5] — raw DORGA logits
+    user_edit_history: list of list [[RT, RB, LT, LB], ...] — 사용자 수정 점수 (GT history 역할)
+    alpha: float — prior temperature (default: config.MARKOV_ALPHA)
+    returns: list of list [[RT, RB, LT, LB], ...] — 보정된 예측
+    """
+    if MARKOV_P1 is None:
+        return logits_np.argmax(axis=-1).tolist()
+
+    if alpha is None:
+        alpha = MARKOV_ALPHA
+
+    N, R, C = logits_np.shape
+    probs = softmax(logits_np, axis=-1)
+    corrected = []
+
+    for i in range(N):
+        row = []
+        # 이전 시점의 user edit를 history로 사용 (GT history 방식)
+        prev = user_edit_history[i - 1] if i > 0 and user_edit_history else None
+        for r in range(R):
+            p_model = probs[i, r]
+            if prev is None:
+                row.append(int(p_model.argmax()))
+            else:
+                p_markov = MARKOV_P1[r, int(prev[r])]
+                log_p = np.log(p_model + 1e-10) + alpha * np.log(p_markov + 1e-10)
+                row.append(int(log_p.argmax()))
+        corrected.append(row)
+
+    return corrected
 
 
 # ═══════════════════════════════════════════════════════════
@@ -114,14 +148,13 @@ def get_severity_color(severity):
     return mapping[severity]
 
 
-def inference_with_overlay(img_list, inference_list, selected_idx1, selected_idx2, flip_flag):
+def inference_with_overlay(img_list, inference_list, selected_idx1, selected_idx2):
     """
     선택된 이미지에 2분할 선 및 severity 점수를 오버레이합니다.
 
     img_list: 이미지 목록 (numpy array)
     selected_idx1, selected_idx2: 선택된 이미지 인덱스
-    inference_list: 각 이미지에 대한 [RT, LT, RB, LB] 추론 결과 리스트
-    flip_flag: 좌우 반전 여부
+    inference_list: 각 이미지에 대한 [RT, RB, LT, LB] 추론 결과 리스트
     """
 
     def get_image(idx):
@@ -167,20 +200,13 @@ def inference_with_overlay(img_list, inference_list, selected_idx1, selected_idx
     overlay_images = []
     data_tensor_np = data_tensor.cpu().numpy()
 
-    # flip_flag에 따른 4분면 매핑
-    quad_map_0 = {
+    # 4분면 매핑 (DORGA 순서: RT=0, RB=1, LT=2, LB=3)
+    quad_map = {
         (0, 0): ("RT", 0),
-        (0, 1): ("LT", 1),
-        (1, 0): ("RB", 2),
+        (0, 1): ("LT", 2),
+        (1, 0): ("RB", 1),
         (1, 1): ("LB", 3),
     }
-    quad_map_1 = {
-        (0, 0): ("LT", 1),
-        (0, 1): ("RT", 0),
-        (1, 0): ("LB", 3),
-        (1, 1): ("RB", 2),
-    }
-    quad_map = quad_map_0 if flip_flag == 0 else quad_map_1
 
     for i in range(batch):
         original_img = np.transpose(data_tensor_np[i], (1, 2, 0))

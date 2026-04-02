@@ -1,7 +1,7 @@
-# utils/utils_back.py — CBIR 제거 & 정리 버전
+# utils/utils_back.py — Flip 제거 & Post-hoc Markov 적용 버전
 
 import gradio as gr
-from utils.utils_severity import inference_with_overlay, get_severity_color
+from utils.utils_severity import inference_with_overlay, get_severity_color, apply_posthoc_correction
 from PIL import Image
 import numpy as np
 import pandas as pd
@@ -20,6 +20,9 @@ image_resize_transform = transforms.Resize(
     (512, 512), interpolation=transforms.InterpolationMode.BILINEAR
 )
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# ROI 순서: DORGA 네이티브 [RT, RB, LT, LB]
+ROI_MAPPING = {"RT": 0, "RB": 1, "LT": 2, "LB": 3}
 
 
 # ════════════════════════════════════════════════
@@ -41,24 +44,21 @@ def strip_gallery_prefix(label_text: str) -> str:
     """갤러리 라벨에서 '✔ 1. ' 같은 선택 표시와 번호를 모두 제거하고 원본 파일명만 반환"""
     cleaned = re.sub(r'^[✔✓]\s*', '', label_text)
     cleaned = re.sub(r'^\d+\.\s*', '', cleaned)
-    # 중첩된 경우 한 번 더
     cleaned = re.sub(r'^[✔✓]\s*', '', cleaned)
     cleaned = re.sub(r'^\d+\.\s*', '', cleaned)
     return cleaned.strip()
 
 
-GALLERY_BORDER_COLOR = (0, 180, 255)  # 선택 테두리 색상 (BGR: 밝은 파란색)
+GALLERY_BORDER_COLOR = (0, 180, 255)
 GALLERY_BORDER_THICKNESS = 4
 
 
 def _add_selection_border(img):
-    """갤러리 썸네일에 선택 테두리를 그린 복사본 반환"""
     if img is None:
         return img
     arr = np.array(img, copy=True)
     if arr.dtype.kind == 'f':
         arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
-    # 그레이스케일이면 BGR로 변환
     if arr.ndim == 2:
         arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
     elif arr.shape[2] == 1:
@@ -78,7 +78,6 @@ def on_select_gallery(gallery, img_list, datetime_list, selected_indices, evt: g
     if idx < 0 or idx >= len(gallery):
         return None, None, None, None, selected_indices, gallery, False
 
-    # 매 선택마다 현재 라벨에서 접두사를 제거해 원본 파일명 추출
     on_select_gallery.cached_names = [strip_gallery_prefix(text) for _, text in gallery]
 
     if idx in selected_indices:
@@ -123,34 +122,30 @@ def on_select_gallery(gallery, img_list, datetime_list, selected_indices, evt: g
 # 오버레이 / 클릭 헬퍼
 # ════════════════════════════════════════════════
 
-def inference_overlay(image1, image2, image3, image4, orgn_img_list, flip_img_list,
-                      overlay_flag, flip_flag, selected_indices, inference_list):
+def inference_overlay(image1, image2, image3, image4, orgn_img_list,
+                      overlay_flag, selected_indices, inference_list):
     new_images = [None, None, None, None]
     if len(selected_indices) == 0:
         return image1, image2, image3, image4, overlay_flag
     for pos, idx in enumerate(selected_indices):
-        processed = inference_with_overlay(orgn_img_list, inference_list, idx, idx, flip_flag)
+        processed = inference_with_overlay(orgn_img_list, inference_list, idx, idx)
         new_images[pos] = processed[0] if processed and len(processed) > 0 else orgn_img_list[idx]
     for pos in range(len(selected_indices), 4):
         new_images[pos] = None
     return new_images[0], new_images[1], new_images[2], new_images[3], overlay_flag
 
 
-def get_quadrant_label(x, y, width, height, flip_flag):
+def get_quadrant_label(x, y, width, height):
     center_x = width / 2
     center_y = height / 2
     row = 0 if y < center_y else 1
     col = 0 if x < center_x else 1
-    if not flip_flag:
-        mapping = {(0, 0): "RT", (0, 1): "LT",
-                   (1, 0): "RB", (1, 1): "LB"}
-    else:
-        mapping = {(0, 0): "LT", (0, 1): "RT",
-                   (1, 0): "LB", (1, 1): "RB"}
+    mapping = {(0, 0): "RT", (0, 1): "LT",
+               (1, 0): "RB", (1, 1): "LB"}
     return mapping[(row, col)]
 
 
-def draw_click_border(image, quadrant_label, flip_flag=False, overlay_flag=True):
+def draw_click_border(image, quadrant_label):
     if image is None:
         return None
     image_copy = image.copy()
@@ -161,21 +156,12 @@ def draw_click_border(image, quadrant_label, flip_flag=False, overlay_flag=True)
             image_copy = image_copy.astype(np.uint8)
     h, w = image_copy.shape[:2]
     half_w, half_h = w // 2, h // 2
-    if not flip_flag:
-        quadrant_boxes = {
-            "RT": (0, 0, half_w, half_h),
-            "LT": (half_w, 0, w - 1, half_h),
-            "RB": (0, half_h, half_w, h - 1),
-            "LB": (half_w, half_h, w - 1, h - 1),
-        }
-    else:
-        image_copy = np.ascontiguousarray(image_copy)
-        quadrant_boxes = {
-            "LT": (0, 0, half_w, half_h),
-            "RT": (half_w, 0, w - 1, half_h),
-            "LB": (0, half_h, half_w, h - 1),
-            "RB": (half_w, half_h, w - 1, h - 1),
-        }
+    quadrant_boxes = {
+        "RT": (0, 0, half_w, half_h),
+        "LT": (half_w, 0, w - 1, half_h),
+        "RB": (0, half_h, half_w, h - 1),
+        "LB": (half_w, half_h, w - 1, h - 1),
+    }
     if quadrant_label in quadrant_boxes:
         x1, y1, x2, y2 = quadrant_boxes[quadrant_label]
         cv2.rectangle(image_copy, (x1, y1), (x2, y2), (255, 255, 255), 1)
@@ -193,9 +179,9 @@ def safe_copy_image(img, fallback=None):
 
 
 def get_adjusted_clean_image(first_img, idx, placeholder_img,
-                             orgn_img_list, inference_list, flip_flag, overlay_flag):
+                             orgn_img_list, inference_list, overlay_flag):
     if overlay_flag:
-        processed = inference_with_overlay(orgn_img_list, inference_list, idx, idx, flip_flag)
+        processed = inference_with_overlay(orgn_img_list, inference_list, idx, idx)
         if processed and len(processed) > 0:
             return processed[0]
         else:
@@ -211,11 +197,10 @@ def get_adjusted_clean_image(first_img, idx, placeholder_img,
 def _on_image_click(slot_index,
                     image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
-                    flip_flag, overlay_flag, selected_indices, click_info,
+                    overlay_flag, selected_indices, click_info,
                     orgn_img_list, inference_list, evt: gr.SelectData):
-    """slot_index: 0~3 중 어떤 이미지 슬롯이 클릭되었는지"""
     x, y = evt.index
-    quadrant_label = get_quadrant_label(x, y, 512, 512, flip_flag)
+    quadrant_label = get_quadrant_label(x, y, 512, 512)
 
     images = [image1, image2, image3, image4]
     firsts = [first_image1, first_image2, first_image3, first_image4]
@@ -225,11 +210,11 @@ def _on_image_click(slot_index,
         idx = selected_indices[pos] if pos < len(selected_indices) else 0
         fresh.append(get_adjusted_clean_image(
             firsts[pos], idx, images[pos],
-            orgn_img_list, inference_list, flip_flag, overlay_flag
+            orgn_img_list, inference_list, overlay_flag
         ))
 
     used_idx = selected_indices[slot_index] if slot_index < len(selected_indices) else 0
-    bordered = draw_click_border(fresh[slot_index], quadrant_label, flip_flag, overlay_flag)
+    bordered = draw_click_border(fresh[slot_index], quadrant_label)
     new_click_info = f"Image {used_idx + 1}, {quadrant_label}"
 
     result_images = list(fresh)
@@ -244,41 +229,41 @@ def _on_image_click(slot_index,
 
 def on_image1_click(image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
-                    flip_flag, overlay_flag, selected_indices, click_info,
+                    overlay_flag, selected_indices, click_info,
                     orgn_img_list, inference_list, evt: gr.SelectData):
     return _on_image_click(0, image1, image2, image3, image4,
                            first_image1, first_image2, first_image3, first_image4,
-                           flip_flag, overlay_flag, selected_indices, click_info,
+                           overlay_flag, selected_indices, click_info,
                            orgn_img_list, inference_list, evt)
 
 
 def on_image2_click(image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
-                    flip_flag, overlay_flag, selected_indices, click_info,
+                    overlay_flag, selected_indices, click_info,
                     orgn_img_list, inference_list, evt: gr.SelectData):
     return _on_image_click(1, image1, image2, image3, image4,
                            first_image1, first_image2, first_image3, first_image4,
-                           flip_flag, overlay_flag, selected_indices, click_info,
+                           overlay_flag, selected_indices, click_info,
                            orgn_img_list, inference_list, evt)
 
 
 def on_image3_click(image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
-                    flip_flag, overlay_flag, selected_indices, click_info,
+                    overlay_flag, selected_indices, click_info,
                     orgn_img_list, inference_list, evt: gr.SelectData):
     return _on_image_click(2, image1, image2, image3, image4,
                            first_image1, first_image2, first_image3, first_image4,
-                           flip_flag, overlay_flag, selected_indices, click_info,
+                           overlay_flag, selected_indices, click_info,
                            orgn_img_list, inference_list, evt)
 
 
 def on_image4_click(image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
-                    flip_flag, overlay_flag, selected_indices, click_info,
+                    overlay_flag, selected_indices, click_info,
                     orgn_img_list, inference_list, evt: gr.SelectData):
     return _on_image_click(3, image1, image2, image3, image4,
                            first_image1, first_image2, first_image3, first_image4,
-                           flip_flag, overlay_flag, selected_indices, click_info,
+                           overlay_flag, selected_indices, click_info,
                            orgn_img_list, inference_list, evt)
 
 
@@ -299,8 +284,7 @@ def update_dropdown_default(click_info, inference_list, inference_list_edit):
         image_str = parts[0].strip()
         region_str = parts[1].strip()
         image_idx = int(image_str.split(" ")[1]) - 1
-        mapping = {"RT": 0, "LT": 1, "RB": 2, "LB": 3}
-        region_idx = mapping.get(region_str, 0)
+        region_idx = ROI_MAPPING.get(region_str, 0)
         original_score = inference_list[image_idx][region_idx]
         current_score = inference_list_edit[image_idx][region_idx]
         score_str = str(current_score)
@@ -320,8 +304,7 @@ def update_score(new_score, click_info, inference_list_edit):
         image_str = parts[0].strip()
         region_str = parts[1].strip()
         image_idx = int(image_str.split(" ")[1]) - 1
-        mapping = {"RT": 0, "LT": 1, "RB": 2, "LB": 3}
-        region_idx = mapping.get(region_str, 0)
+        region_idx = ROI_MAPPING.get(region_str, 0)
         cleaned_score = new_score.replace("*", "").strip()
         inference_list_edit[image_idx][region_idx] = int(cleaned_score)
     except Exception as e:
@@ -330,16 +313,29 @@ def update_score(new_score, click_info, inference_list_edit):
 
 
 # ════════════════════════════════════════════════
+# Post-hoc Markov 토글
+# ════════════════════════════════════════════════
+
+def toggle_posthoc(logits_state, posthoc_flag):
+    new_flag = not posthoc_flag
+    if new_flag and logits_state is not None:
+        posthoc_list = apply_posthoc_correction(logits_state)
+        return posthoc_list, new_flag
+    return None, new_flag
+
+
+# ════════════════════════════════════════════════
 # 그래프
 # ════════════════════════════════════════════════
 
-def update_graph(inference_list, inference_list_edit, click_info, selected_indices):
+def update_graph(inference_list, inference_list_edit, click_info, selected_indices,
+                 inference_list_posthoc=None):
     if not inference_list:
         return None
 
     plt.close('all')
 
-    roi_names = ['RT', 'LT', 'RB', 'LB']
+    roi_names = ['RT', 'RB', 'LT', 'LB']
     n_imgs = len(inference_list)
     xs = list(range(1, n_imgs + 1))
 
@@ -348,7 +344,7 @@ def update_graph(inference_list, inference_list_edit, click_info, selected_indic
         try:
             img_str, roi_str = [p.strip() for p in click_info.split(",")]
             upd_i = int(img_str.split(" ")[1]) - 1
-            upd_roi = {"RT": 0, "LT": 1, "RB": 2, "LB": 3}.get(roi_str)
+            upd_roi = ROI_MAPPING.get(roi_str)
         except:
             pass
 
@@ -365,17 +361,23 @@ def update_graph(inference_list, inference_list_edit, click_info, selected_indic
     tot_ai = [sum(r) for r in inference_list]
     tot_edit = ([sum(r) for r in inference_list_edit]
                 if inference_list_edit and len(inference_list_edit) == n_imgs else None)
+    tot_posthoc = ([sum(r) for r in inference_list_posthoc]
+                   if inference_list_posthoc and len(inference_list_posthoc) == n_imgs else None)
 
     axT.set_facecolor("#0F0F11")
-    axT.plot(xs, tot_ai, 's-', ms=4, lw=1.2, color='#00FFFF', label="Total AI", zorder=3)
+    if tot_posthoc:
+        axT.plot(xs, tot_posthoc, 's-', ms=4, lw=1.2, color='#00FF88', label="Total Post-Hoc", zorder=4)
+    else:
+        axT.plot(xs, tot_ai, 's-', ms=4, lw=1.2, color='#00FFFF', label="Total AI", zorder=3)
     if tot_edit:
         axT.plot(xs, tot_edit, 's--', ms=4, lw=1.2, color='#E26114', label="Total Edit", zorder=2)
 
     if tot_edit and upd_i is not None:
         axT.scatter(upd_i + 1, tot_edit[upd_i], s=60, color="#FF00FF", zorder=5)
+    tot_base = tot_posthoc or tot_ai
     for sel in selected_indices or []:
         if isinstance(sel, int) and 0 <= sel < n_imgs:
-            y = tot_edit[sel] if tot_edit else tot_ai[sel]
+            y = tot_edit[sel] if tot_edit else tot_base[sel]
             axT.annotate("", xy=(sel + 1, y), xytext=(sel + 1, y + 1),
                          arrowprops=dict(arrowstyle="->", color="red", lw=2))
 
@@ -393,9 +395,17 @@ def update_graph(inference_list, inference_list_edit, click_info, selected_indic
         ai_vals = [row[i] for row in inference_list]
         ed_vals = ([row[i] for row in inference_list_edit]
                    if inference_list_edit and len(inference_list_edit) == n_imgs else None)
-        h1, = ax.plot(xs, ai_vals, 'o-', ms=3, lw=1, color='#00FFFF', label="AI Inference", zorder=3)
-        handles.append(h1)
-        labels.append("AI Inference")
+        ph_vals = ([row[i] for row in inference_list_posthoc]
+                   if inference_list_posthoc and len(inference_list_posthoc) == n_imgs else None)
+
+        if ph_vals:
+            h1, = ax.plot(xs, ph_vals, 'o-', ms=3, lw=1, color='#00FF88', label="Post-Hoc", zorder=4)
+            handles.append(h1)
+            labels.append("Post-Hoc")
+        else:
+            h1, = ax.plot(xs, ai_vals, 'o-', ms=3, lw=1, color='#00FFFF', label="AI Inference", zorder=3)
+            handles.append(h1)
+            labels.append("AI Inference")
 
         if ed_vals:
             h2, = ax.plot(xs, ed_vals, 'o--', ms=3, lw=1, color='#E26114', label="User Edit", zorder=2)
@@ -404,9 +414,10 @@ def update_graph(inference_list, inference_list_edit, click_info, selected_indic
             if upd_roi == i and upd_i is not None:
                 ax.scatter(upd_i + 1, ed_vals[upd_i], color='#FF00FF', s=40, zorder=5)
 
+        base_vals = ph_vals or ai_vals
         for sel in selected_indices or []:
             if isinstance(sel, int) and 0 <= sel < n_imgs:
-                y = ed_vals[sel] if ed_vals else ai_vals[sel]
+                y = ed_vals[sel] if ed_vals else base_vals[sel]
                 ax.annotate("", xy=(sel + 1, y), xytext=(sel + 1, y + 0.5),
                             arrowprops=dict(arrowstyle="->", color="red", lw=2))
 
@@ -423,14 +434,14 @@ def update_graph(inference_list, inference_list_edit, click_info, selected_indic
             sp.set_color("white")
 
     # ── 범례 ──
-    order = ["AI Inference", "User Edit"]
+    order = ["AI Inference", "Post-Hoc", "User Edit"]
     uniq = {}
     for lbl in order:
         for h, l in zip(handles, labels):
             if l == lbl and l not in uniq:
                 uniq[l] = h
     legend = fig.legend(list(uniq.values()), list(uniq.keys()),
-                        loc='upper center', bbox_to_anchor=(0.5, 0.94), ncol=2,
+                        loc='upper center', bbox_to_anchor=(0.5, 0.94), ncol=3,
                         frameon=False)
     for t in legend.get_texts():
         t.set_color("white")
@@ -475,12 +486,11 @@ def ensure_four(img_list, fallback):
 
 
 # ════════════════════════════════════════════════
-# 메인 이미지 새로고침 (Overlay / Flip 토글 시)
+# 메인 이미지 새로고침 (Overlay 토글 시)
 # ════════════════════════════════════════════════
 
-def refresh_main_images(orgn_img_list, flip_img_list,
-                        inference_list, selected_indices,
-                        overlay_flag, flip_flag, popup_click_info):
+def refresh_main_images(orgn_img_list, inference_list, selected_indices,
+                        overlay_flag, popup_click_info):
     new_main_images = [None, None, None, None]
     if not selected_indices or len(selected_indices) == 0:
         return new_main_images
@@ -503,60 +513,35 @@ def refresh_main_images(orgn_img_list, flip_img_list,
             break
 
         if overlay_flag:
-            if flip_flag:
-                processed = inference_with_overlay(
-                    flip_img_list, inference_list, idx, idx, flip_flag=True
-                )
-                final_img = processed[0] if processed else flip_img_list[idx]
-            else:
-                processed = inference_with_overlay(
-                    orgn_img_list, inference_list, idx, idx, flip_flag=False
-                )
-                final_img = processed[0] if processed else orgn_img_list[idx]
+            processed = inference_with_overlay(
+                orgn_img_list, inference_list, idx, idx
+            )
+            final_img = processed[0] if processed else orgn_img_list[idx]
         else:
-            if flip_flag:
-                final_img = flip_img_list[idx]
-            else:
-                final_img = orgn_img_list[idx]
+            final_img = orgn_img_list[idx]
 
         if parse_idx == idx and parse_quad:
-            final_img = draw_click_border(final_img, parse_quad, flip_flag)
+            final_img = draw_click_border(final_img, parse_quad)
         new_main_images[pos] = final_img
 
     return new_main_images
 
 
 # ════════════════════════════════════════════════
-# 토글 버튼 (CBIR 제거 버전)
+# 토글 버튼
 # ════════════════════════════════════════════════
 
-def toggle_overlay(orgn_img_list, flip_img_list, inference_list, selected_indices,
-                   popup_click_info, flip_flag, overlay_flag):
+def toggle_overlay(orgn_img_list, inference_list, selected_indices,
+                   popup_click_info, overlay_flag):
     new_overlay_flag = not overlay_flag
     main_images = refresh_main_images(
-        orgn_img_list, flip_img_list,
-        inference_list, selected_indices,
-        new_overlay_flag, flip_flag,
-        popup_click_info
+        orgn_img_list, inference_list, selected_indices,
+        new_overlay_flag, popup_click_info
     )
+    btn_label = "[ O ]" if new_overlay_flag else "O"
     return (
         main_images[0], main_images[1], main_images[2], main_images[3],
-        new_overlay_flag
-    )
-
-
-def toggle_flip(orgn_img_list, flip_img_list, inference_list, selected_indices,
-                popup_click_info, overlay_flag, flip_flag):
-    new_flip_flag = not flip_flag
-    main_images = refresh_main_images(
-        orgn_img_list, flip_img_list,
-        inference_list, selected_indices,
-        overlay_flag, new_flip_flag,
-        popup_click_info
-    )
-    return (
-        main_images[0], main_images[1], main_images[2], main_images[3],
-        new_flip_flag
+        new_overlay_flag, btn_label
     )
 
 
@@ -583,7 +568,6 @@ def reset_page():
         # ③ 인덱스 & 이미지 리스트
         gr.update(value=[]),            # selected_indices
         gr.update(value=None),          # orgn_img_list
-        gr.update(value=None),          # flip_img_list
 
         # ④ first_image1-4
         gr.update(value=None), gr.update(value=None),
@@ -607,8 +591,10 @@ def reset_page():
         gr.update(value=""),                       # user_id_input
 
         gr.update(value=False),   # overlay_flag
-        gr.update(value=False),   # flip_flag
         gr.update(value=False),   # file_is_npz_state
+        gr.update(value=None),    # logits_state
+        gr.update(value=None),    # inference_list_posthoc
+        gr.update(value=False),   # posthoc_flag
     )
 
 
@@ -652,7 +638,6 @@ def export_npy(inference_list, inference_list_edit,
     npz_dir = _make_npz_dir(BASE_DIR, user_id, yymmdd)
     npz_path = os.path.join(npz_dir, f"{patient_id}_{hhmmss}.npz")
 
-    # 이미지 저장
     img_dir = os.path.join(npz_dir, f"{patient_id}_{hhmmss}_images")
     os.makedirs(img_dir, exist_ok=True)
 
@@ -668,7 +653,6 @@ def export_npy(inference_list, inference_list_edit,
 
     print(f"[IMG]  saved → {img_dir} ({len(orgn_img_list or [])} files)")
 
-    # NPZ
     export_data = {
         "patient_id":      patient_id,
         "user_id":         user_id,
@@ -681,11 +665,10 @@ def export_npy(inference_list, inference_list_edit,
     np.savez(npz_path, **export_data)
     print(f"[NPZ] saved → {npz_path}")
 
-    # 통합 엑셀
     excel_path = os.path.join(BASE_DIR, "roi_export.xlsx")
     columns = ["PatientID", "UserID", "Timestamp"]
     for i in range(1, 21):
-        columns += [f"RT{i}", f"LT{i}", f"RB{i}", f"LB{i}"]
+        columns += [f"RT{i}", f"RB{i}", f"LT{i}", f"LB{i}"]
 
     def _row(scores, label):
         row = [patient_id, label, now.strftime("%Y-%m-%d %H:%M:%S")]

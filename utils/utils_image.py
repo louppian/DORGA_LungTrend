@@ -110,22 +110,6 @@ def dicom_info(ds):
 
     return patient_id, lines_str
 
-def flip_images(image_list):
-    flipped_list = []
-    print('1. Flip Images Cashing Completes')
-    for img in image_list:
-        if img is not None:
-            # 이미지가 NumPy 배열이면 np.fliplr로 좌우반전
-            if isinstance(img, np.ndarray):
-                flipped_img = np.fliplr(img)
-            else:
-                flipped_img = img.transpose(Image.FLIP_LEFT_RIGHT)
-            flipped_list.append(flipped_img)
-        else:
-            flipped_list.append(img)
-    return flipped_list
-
-
 # 파일 정보 추출
 def files_info(files): 
     info_list = []  
@@ -209,14 +193,11 @@ def files_info(files):
             norm_img_2d = img_list_np[i, 0]  # shape: (512, 512)
             origin_items.append(norm_img_2d)
 
-        # 좌우반전 이미지 리스트 생성 (flip_images는 위에서 수정된 함수 사용)
-        fliped_items = flip_images(origin_items)
-        gallery_mask = mask_tensor.cpu().numpy()           # 마스크 NumPy
-        inference_list = all_image_inference(img_list_tensor)  # 중증도 추론결과 
-                
+        gallery_mask = mask_tensor.cpu().numpy()
+        inference_list, logits_np = all_image_inference(img_list_tensor)
+
         ext_info = convert_ext(file_fullname)
         cnt_info = convert_cnt(cnt_image)
         pid_info = convert_pid(patient_ids[0])
 
-    # gallery_items는 1024×1024 버전, origin_items와 fliped_items는 512×512 정규화/좌우반전 이미지 리스트
-    return gallery_items, origin_items, fliped_items, inference_list, datetimes, ext_info, cnt_info, pid_info
+    return gallery_items, origin_items, inference_list, logits_np, datetimes, ext_info, cnt_info, pid_info
