@@ -1,5 +1,8 @@
 # app.py — Flip 제거 & Post-hoc Markov Correction 적용 버전
 
+import warnings
+warnings.filterwarnings("ignore", message="input's size at dim=.*does not match num_features")
+
 import gradio as gr
 import os
 import re
@@ -139,18 +142,21 @@ def process_upload(files):
             return name.strip()
 
         if gallery_images is not None:
-            new_gallery, new_orgn = [], []
-            for item in gallery_images:
+            new_gallery, new_orgn, npz_file_names = [], [], []
+            for i, item in enumerate(gallery_images):
                 if isinstance(item, (list, tuple)) and len(item) == 2:
                     img_raw, label_raw = item
                 else:
                     img_raw, label_raw = item, ""
                 img_arr = convert_to_image(img_raw)
                 clean_lbl = _strip_check_prefix(label_raw, first_file.name)
-                new_gallery.append((img_arr, clean_lbl))
+                npz_file_names.append(clean_lbl)
+                new_gallery.append((img_arr, str(i + 1)))
                 new_orgn.append(img_arr)
             gallery_images = new_gallery
             orgn_images = new_orgn
+        else:
+            npz_file_names = []
 
         image_count = len(gallery_images) if gallery_images is not None else 0
         file_is_npz = fname.endswith(".npz")
@@ -172,13 +178,12 @@ def process_upload(files):
             inference_edit,
             [],
             None,                              # inference_list_posthoc (NPZ에는 없음)
+            npz_file_names,                    # file_names_state
         )
     else:
         result = files_info(files)
-        # result: gallery_items, origin_items, inference_list, logits_np, datetimes, ext_info, cnt_info, pid_info
+        # result: gallery_display, origin_items, inference_list, logits_np, datetimes, ext_info, cnt_info, pid_info, file_names
         logits_np = result[3]
-        # 초기 업로드 시에는 AI inference 자체를 history로 사용 (아직 user edit 없음)
-        posthoc_list = apply_posthoc_correction(logits_np, result[2]) if logits_np is not None else None
         return (
             result[0],                        # gallery
             result[1],                        # orgn_img_list
@@ -195,7 +200,8 @@ def process_upload(files):
             False,                             # file_is_npz
             result[2],                        # inference_edit
             [],
-            posthoc_list,                     # inference_list_posthoc (자동 계산)
+            None,                             # inference_list_posthoc (P 버튼 시 계산)
+            result[8],                        # file_names_state
         )
 
 
@@ -222,7 +228,8 @@ def do_toggle_posthoc(logits_state, posthoc_flag, inference_list, inference_list
     else:
         posthoc_list = inference_list_posthoc
 
-    display_inference = posthoc_list if (new_flag and posthoc_list) else inference_list
+    active_posthoc = posthoc_list if new_flag else None
+    display_inference = active_posthoc if active_posthoc else inference_list
 
     # 이미지 갱신
     imgs = [None, None, None, None]
@@ -240,9 +247,10 @@ def do_toggle_posthoc(logits_state, posthoc_flag, inference_list, inference_list
             imgs[pos] = orgn_img_list[idx]
 
     fig = update_graph(inference_list, inference_list_edit, popup_click_info,
-                       selected_indices, posthoc_list)
+                       selected_indices, active_posthoc)
     btn_label = "[ P ]" if new_flag else "P"
-    return imgs[0], imgs[1], imgs[2], imgs[3], new_flag, fig, gr.update(value=btn_label)
+    return (imgs[0], imgs[1], imgs[2], imgs[3],
+            new_flag, posthoc_list, fig, gr.update(value=btn_label))
 
 
 # ════════════════════════════════════════════════
@@ -266,6 +274,7 @@ with gr.Blocks(css=css) as demo:
     logits_state = gr.State(value=None)
     inference_list_posthoc = gr.State(value=None)
     posthoc_flag = gr.State(value=False)
+    file_names_state = gr.State(value=[])
 
     # ── 업로드 섹션 ──
     with gr.Column(visible=True) as upload_section:
@@ -329,7 +338,7 @@ with gr.Blocks(css=css) as demo:
             patient_id_info, file_type_info, image_count_info,
             ext_pid, ext_str, ext_cnt,
             user_id_input, file_is_npz_state, inference_list_edit, selected_indices,
-            inference_list_posthoc
+            inference_list_posthoc, file_names_state
         ],
     )
 
@@ -363,7 +372,8 @@ with gr.Blocks(css=css) as demo:
         inputs=[
             image1, image2, image3, image4,
             orgn_img_list,
-            overlay_flag, selected_indices, inference_list
+            overlay_flag, selected_indices, inference_list,
+            posthoc_flag, inference_list_posthoc
         ],
         outputs=[image1, image2, image3, image4, overlay_flag],
     ).then(
@@ -394,6 +404,7 @@ with gr.Blocks(css=css) as demo:
                 first_image1, first_image2, first_image3, first_image4,
                 overlay_flag, selected_indices, popup_click_info,
                 orgn_img_list, inference_list,
+                posthoc_flag, inference_list_posthoc,
             ],
             outputs=[
                 popup_click_info,
@@ -433,6 +444,7 @@ with gr.Blocks(css=css) as demo:
         inputs=[
             orgn_img_list, inference_list, selected_indices,
             popup_click_info, overlay_flag,
+            posthoc_flag, inference_list_posthoc,
         ],
         outputs=[image1, image2, image3, image4, overlay_flag, overlay_button],
     )
@@ -445,7 +457,7 @@ with gr.Blocks(css=css) as demo:
             inference_list_edit, popup_click_info, selected_indices,
             orgn_img_list, overlay_flag,
         ],
-        outputs=[image1, image2, image3, image4, posthoc_flag, graph, posthoc_button],
+        outputs=[image1, image2, image3, image4, posthoc_flag, inference_list_posthoc, graph, posthoc_button],
     )
 
     # 팝업 값 변경
@@ -485,7 +497,7 @@ with gr.Blocks(css=css) as demo:
     # Export
     export_button.click(
         fn=export_npy,
-        inputs=[inference_list, inference_list_edit, patient_id_info, user_id_input, gallery, orgn_img_list],
+        inputs=[inference_list, inference_list_edit, patient_id_info, user_id_input, gallery, orgn_img_list, file_names_state],
         outputs=[],
     )
 
@@ -507,8 +519,9 @@ with gr.Blocks(css=css) as demo:
             user_id_input,                                  # 23
             overlay_flag, file_is_npz_state,                # 24~25
             logits_state, inference_list_posthoc, posthoc_flag,  # 26~28
+            file_names_state,                               # 29
         ],
     )
 
 
-demo.launch(share=False, debug=True)
+demo.launch(server_name="127.0.0.1", server_port=7860, share=False, debug=True, inbrowser=True)

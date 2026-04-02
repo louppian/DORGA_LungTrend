@@ -10,7 +10,7 @@ import matplotlib
 matplotlib.use('Agg')
 
 from modules.dorga import DORGAFullModel, vit_base_patch16_512
-from config import MARKOV_ALPHA
+from config import MARKOV_ALPHA, MARKOV_ORDER
 from scipy.special import softmax
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -18,7 +18,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ═══════════════════════════════════════════════════════════
 # DORGA-Full 모델 로드
 # ═══════════════════════════════════════════════════════════
-MODEL_PATH = "assets/weights/DORGAFull.pth"
+MODEL_PATH = "assets/weights/DORGAFull_posthoc.pth"
 K_PATTERNS = 7
 
 # dummy prior (load_state_dict로 실제 값이 덮어씌워짐)
@@ -33,14 +33,20 @@ model = DORGAFullModel(
     pi_global=_pi_global_dummy, pi_patterns=_pi_patterns_dummy,
 ).to(device)
 
+MARKOV_P = None
 if os.path.exists(MODEL_PATH):
-    sd = torch.load(MODEL_PATH, map_location=device, weights_only=False)
-    if 'state_dict' in sd:
-        sd = sd['state_dict']
+    ckpt = torch.load(MODEL_PATH, map_location=device, weights_only=False)
+    sd = ckpt['state_dict'] if 'state_dict' in ckpt else ckpt
     model.load_state_dict(sd, strict=False)
-    print(f"[DORGA] 모델 로드 완료: {MODEL_PATH}")
+    # posthoc 전이행렬 로드
+    if 'posthoc' in ckpt:
+        _ph = ckpt['posthoc']
+        _key = f'P{MARKOV_ORDER}'
+        MARKOV_P = _ph[_key] if _key in _ph else _ph.get('P1')
+        print(f"[DORGA] posthoc P{MARKOV_ORDER} loaded: {MARKOV_P.shape}")
+    print(f"[DORGA] model loaded: {MODEL_PATH}")
 else:
-    print(f"[DORGA] 경고: 가중치 파일을 찾을 수 없습니다 → {MODEL_PATH}")
+    print(f"[DORGA] WARNING: weight file not found: {MODEL_PATH}")
 
 model.eval()
 
@@ -57,8 +63,6 @@ mask_resize_transform = transforms.Resize(
 dorga_normalize = transforms.Normalize([0.56], [0.17])
 
 # ROI 순서: DORGA 네이티브 [RT, RB, LT, LB] — GUI도 동일하게 통일
-MARKOV_P1_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "weights", "markov_P1.npy")
-MARKOV_P1 = np.load(MARKOV_P1_PATH) if os.path.exists(MARKOV_P1_PATH) else None
 
 REL_BOXES = torch.tensor([
     [0.0, 0.0, 0.5, 0.5],   # RT (이미지 좌상단)
@@ -104,27 +108,29 @@ def apply_posthoc_correction(logits_np, user_edit_history, alpha=None):
     user_edit_history: list of list [[RT, RB, LT, LB], ...] — 사용자 수정 점수 (GT history 역할)
     alpha: float — prior temperature (default: config.MARKOV_ALPHA)
     returns: list of list [[RT, RB, LT, LB], ...] — 보정된 예측
+
+    Order-2: P2[r, prev2, prev1] → 이전 2개 시점 사용
     """
-    if MARKOV_P1 is None:
+    if MARKOV_P is None:
         return logits_np.argmax(axis=-1).tolist()
 
     if alpha is None:
         alpha = MARKOV_ALPHA
 
+    order = MARKOV_ORDER
     N, R, C = logits_np.shape
     probs = softmax(logits_np, axis=-1)
     corrected = []
 
     for i in range(N):
         row = []
-        # 이전 시점의 user edit를 history로 사용 (GT history 방식)
-        prev = user_edit_history[i - 1] if i > 0 and user_edit_history else None
         for r in range(R):
             p_model = probs[i, r]
-            if prev is None:
+            if i < order or not user_edit_history:
                 row.append(int(p_model.argmax()))
             else:
-                p_markov = MARKOV_P1[r, int(prev[r])]
+                idx = tuple(int(user_edit_history[i - order + k][r]) for k in range(order))
+                p_markov = MARKOV_P[r][idx]
                 log_p = np.log(p_model + 1e-10) + alpha * np.log(p_markov + 1e-10)
                 row.append(int(log_p.argmax()))
         corrected.append(row)

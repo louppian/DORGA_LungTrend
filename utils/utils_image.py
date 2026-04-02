@@ -200,4 +200,7 @@ def files_info(files):
         cnt_info = convert_cnt(cnt_image)
         pid_info = convert_pid(patient_ids[0])
 
-    return gallery_items, origin_items, inference_list, logits_np, datetimes, ext_info, cnt_info, pid_info
+    # 갤러리 표시용: 번호만, 원본 파일명은 별도 리스트로 반환
+    file_names = [name for _, name in gallery_items]
+    gallery_display = [(img, str(i + 1)) for i, (img, _) in enumerate(gallery_items)]
+    return gallery_display, origin_items, inference_list, logits_np, datetimes, ext_info, cnt_info, pid_info, file_names

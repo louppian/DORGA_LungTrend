@@ -56,12 +56,16 @@ GALLERY_BORDER_THICKNESS = 4
 def _add_selection_border(img):
     if img is None:
         return img
+    if isinstance(img, Image.Image):
+        img = img.convert("RGB")
     arr = np.array(img, copy=True)
+    if arr.ndim < 2:
+        return img
     if arr.dtype.kind == 'f':
         arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
     if arr.ndim == 2:
         arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
-    elif arr.shape[2] == 1:
+    elif arr.ndim == 3 and arr.shape[2] == 1:
         arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
     h, w = arr.shape[:2]
     t = GALLERY_BORDER_THICKNESS
@@ -94,11 +98,11 @@ def on_select_gallery(gallery, img_list, datetime_list, selected_indices, evt: g
         original_filename = on_select_gallery.cached_names[i]
         is_selected = i in selected_indices
         if is_selected:
-            new_text = f"✔ {i+1}. {original_filename}"
-            display_img = _add_selection_border(img_list[i] if img_list else img)
+            new_text = f"✔ {i+1}"
+            display_img = _add_selection_border(img)
         else:
-            new_text = f"{i+1}. {original_filename}"
-            display_img = img_list[i] if img_list else img
+            new_text = f"{i+1}"
+            display_img = img
         updated_gallery.append((display_img, new_text))
     gallery_update = gr.update(value=updated_gallery)
 
@@ -123,12 +127,14 @@ def on_select_gallery(gallery, img_list, datetime_list, selected_indices, evt: g
 # ════════════════════════════════════════════════
 
 def inference_overlay(image1, image2, image3, image4, orgn_img_list,
-                      overlay_flag, selected_indices, inference_list):
+                      overlay_flag, selected_indices, inference_list,
+                      posthoc_flag=False, inference_list_posthoc=None):
+    display_inf = inference_list_posthoc if (posthoc_flag and inference_list_posthoc) else inference_list
     new_images = [None, None, None, None]
     if len(selected_indices) == 0:
         return image1, image2, image3, image4, overlay_flag
     for pos, idx in enumerate(selected_indices):
-        processed = inference_with_overlay(orgn_img_list, inference_list, idx, idx)
+        processed = inference_with_overlay(orgn_img_list, display_inf, idx, idx)
         new_images[pos] = processed[0] if processed and len(processed) > 0 else orgn_img_list[idx]
     for pos in range(len(selected_indices), 4):
         new_images[pos] = None
@@ -179,9 +185,11 @@ def safe_copy_image(img, fallback=None):
 
 
 def get_adjusted_clean_image(first_img, idx, placeholder_img,
-                             orgn_img_list, inference_list, overlay_flag):
+                             orgn_img_list, inference_list, overlay_flag,
+                             posthoc_flag=False, inference_list_posthoc=None):
+    display_inf = inference_list_posthoc if (posthoc_flag and inference_list_posthoc) else inference_list
     if overlay_flag:
-        processed = inference_with_overlay(orgn_img_list, inference_list, idx, idx)
+        processed = inference_with_overlay(orgn_img_list, display_inf, idx, idx)
         if processed and len(processed) > 0:
             return processed[0]
         else:
@@ -198,7 +206,8 @@ def _on_image_click(slot_index,
                     image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
                     overlay_flag, selected_indices, click_info,
-                    orgn_img_list, inference_list, evt: gr.SelectData):
+                    orgn_img_list, inference_list,
+                    posthoc_flag, inference_list_posthoc, evt: gr.SelectData):
     x, y = evt.index
     quadrant_label = get_quadrant_label(x, y, 512, 512)
 
@@ -210,7 +219,8 @@ def _on_image_click(slot_index,
         idx = selected_indices[pos] if pos < len(selected_indices) else 0
         fresh.append(get_adjusted_clean_image(
             firsts[pos], idx, images[pos],
-            orgn_img_list, inference_list, overlay_flag
+            orgn_img_list, inference_list, overlay_flag,
+            posthoc_flag, inference_list_posthoc
         ))
 
     used_idx = selected_indices[slot_index] if slot_index < len(selected_indices) else 0
@@ -230,41 +240,49 @@ def _on_image_click(slot_index,
 def on_image1_click(image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
                     overlay_flag, selected_indices, click_info,
-                    orgn_img_list, inference_list, evt: gr.SelectData):
+                    orgn_img_list, inference_list,
+                    posthoc_flag, inference_list_posthoc, evt: gr.SelectData):
     return _on_image_click(0, image1, image2, image3, image4,
                            first_image1, first_image2, first_image3, first_image4,
                            overlay_flag, selected_indices, click_info,
-                           orgn_img_list, inference_list, evt)
+                           orgn_img_list, inference_list,
+                           posthoc_flag, inference_list_posthoc, evt)
 
 
 def on_image2_click(image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
                     overlay_flag, selected_indices, click_info,
-                    orgn_img_list, inference_list, evt: gr.SelectData):
+                    orgn_img_list, inference_list,
+                    posthoc_flag, inference_list_posthoc, evt: gr.SelectData):
     return _on_image_click(1, image1, image2, image3, image4,
                            first_image1, first_image2, first_image3, first_image4,
                            overlay_flag, selected_indices, click_info,
-                           orgn_img_list, inference_list, evt)
+                           orgn_img_list, inference_list,
+                           posthoc_flag, inference_list_posthoc, evt)
 
 
 def on_image3_click(image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
                     overlay_flag, selected_indices, click_info,
-                    orgn_img_list, inference_list, evt: gr.SelectData):
+                    orgn_img_list, inference_list,
+                    posthoc_flag, inference_list_posthoc, evt: gr.SelectData):
     return _on_image_click(2, image1, image2, image3, image4,
                            first_image1, first_image2, first_image3, first_image4,
                            overlay_flag, selected_indices, click_info,
-                           orgn_img_list, inference_list, evt)
+                           orgn_img_list, inference_list,
+                           posthoc_flag, inference_list_posthoc, evt)
 
 
 def on_image4_click(image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
                     overlay_flag, selected_indices, click_info,
-                    orgn_img_list, inference_list, evt: gr.SelectData):
+                    orgn_img_list, inference_list,
+                    posthoc_flag, inference_list_posthoc, evt: gr.SelectData):
     return _on_image_click(3, image1, image2, image3, image4,
                            first_image1, first_image2, first_image3, first_image4,
                            overlay_flag, selected_indices, click_info,
-                           orgn_img_list, inference_list, evt)
+                           orgn_img_list, inference_list,
+                           posthoc_flag, inference_list_posthoc, evt)
 
 
 # ════════════════════════════════════════════════
@@ -490,7 +508,9 @@ def ensure_four(img_list, fallback):
 # ════════════════════════════════════════════════
 
 def refresh_main_images(orgn_img_list, inference_list, selected_indices,
-                        overlay_flag, popup_click_info):
+                        overlay_flag, popup_click_info,
+                        posthoc_flag=False, inference_list_posthoc=None):
+    display_inf = inference_list_posthoc if (posthoc_flag and inference_list_posthoc) else inference_list
     new_main_images = [None, None, None, None]
     if not selected_indices or len(selected_indices) == 0:
         return new_main_images
@@ -514,7 +534,7 @@ def refresh_main_images(orgn_img_list, inference_list, selected_indices,
 
         if overlay_flag:
             processed = inference_with_overlay(
-                orgn_img_list, inference_list, idx, idx
+                orgn_img_list, display_inf, idx, idx
             )
             final_img = processed[0] if processed else orgn_img_list[idx]
         else:
@@ -532,11 +552,13 @@ def refresh_main_images(orgn_img_list, inference_list, selected_indices,
 # ════════════════════════════════════════════════
 
 def toggle_overlay(orgn_img_list, inference_list, selected_indices,
-                   popup_click_info, overlay_flag):
+                   popup_click_info, overlay_flag,
+                   posthoc_flag=False, inference_list_posthoc=None):
     new_overlay_flag = not overlay_flag
     main_images = refresh_main_images(
         orgn_img_list, inference_list, selected_indices,
-        new_overlay_flag, popup_click_info
+        new_overlay_flag, popup_click_info,
+        posthoc_flag, inference_list_posthoc
     )
     btn_label = "[ O ]" if new_overlay_flag else "O"
     return (
@@ -595,6 +617,7 @@ def reset_page():
         gr.update(value=None),    # logits_state
         gr.update(value=None),    # inference_list_posthoc
         gr.update(value=False),   # posthoc_flag
+        gr.update(value=[]),      # file_names_state
     )
 
 
@@ -625,7 +648,7 @@ def _clean_gallery_label(label: str) -> str:
 
 
 def export_npy(inference_list, inference_list_edit,
-               ext_pid, user_id_input, gallery, orgn_img_list):
+               ext_pid, user_id_input, gallery, orgn_img_list, file_names=None):
 
     patient_id = _safe(ext_pid.split("Patient ID:")[-1]) if "Patient ID:" in ext_pid else _safe(ext_pid)
     user_id = _safe(user_id_input or "Unknown") or "Unknown"
@@ -641,15 +664,18 @@ def export_npy(inference_list, inference_list_edit,
     img_dir = os.path.join(npz_dir, f"{patient_id}_{hhmmss}_images")
     os.makedirs(img_dir, exist_ok=True)
 
-    for idx, (img_arr, gallery_item) in enumerate(zip(orgn_img_list or [], gallery or [])):
-        raw_label = gallery_item[1] if isinstance(gallery_item, (list, tuple)) and len(gallery_item) >= 2 else str(gallery_item)
-        true_name = _clean_gallery_label(raw_label)
+    for idx, gallery_item in enumerate(gallery or []):
+        img_raw = gallery_item[0] if isinstance(gallery_item, (list, tuple)) else gallery_item
+        true_name = file_names[idx] if file_names and idx < len(file_names) else f"image_{idx+1}"
         root, _ = os.path.splitext(true_name)
         save_name = f"{idx+1:02d}_{root}.png"
         save_path = os.path.join(img_dir, save_name)
-        arr = _to_uint8(np.asarray(img_arr))
-        mode = "L" if arr.ndim == 2 else "RGB"
-        Image.fromarray(arr, mode=mode).save(save_path)
+        if isinstance(img_raw, Image.Image):
+            img_raw.save(save_path)
+        else:
+            arr = _to_uint8(np.asarray(img_raw))
+            mode = "L" if arr.ndim == 2 else "RGB"
+            Image.fromarray(arr, mode=mode).save(save_path)
 
     print(f"[IMG]  saved → {img_dir} ({len(orgn_img_list or [])} files)")
 
