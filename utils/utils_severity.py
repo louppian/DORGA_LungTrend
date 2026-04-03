@@ -62,7 +62,7 @@ mask_resize_transform = transforms.Resize(
 )
 dorga_normalize = transforms.Normalize([0.56], [0.17])
 
-# ROI 순서: DORGA 네이티브 [RT, RB, LT, LB] — GUI도 동일하게 통일
+# ROI 순서: DORGA box 기준 [RT, LT, RB, LB] (idx0=좌상, idx1=우상, idx2=좌하, idx3=우하)
 
 REL_BOXES = torch.tensor([
     [0.0, 0.0, 0.5, 0.5],   # RT (이미지 좌상단)
@@ -206,11 +206,11 @@ def inference_with_overlay(img_list, inference_list, selected_idx1, selected_idx
     overlay_images = []
     data_tensor_np = data_tensor.cpu().numpy()
 
-    # 4분면 매핑 (DORGA 순서: RT=0, RB=1, LT=2, LB=3)
+    # 4분면 매핑 (DORGA box 기준: idx0=좌상, idx1=우상, idx2=좌하, idx3=우하)
     quad_map = {
         (0, 0): ("RT", 0),
-        (0, 1): ("LT", 2),
-        (1, 0): ("RB", 1),
+        (0, 1): ("LT", 1),
+        (1, 0): ("RB", 2),
         (1, 1): ("LB", 3),
     }
 

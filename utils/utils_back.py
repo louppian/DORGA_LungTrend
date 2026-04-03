@@ -21,8 +21,8 @@ image_resize_transform = transforms.Resize(
 )
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ROI 순서: DORGA 네이티브 [RT, RB, LT, LB]
-ROI_MAPPING = {"RT": 0, "RB": 1, "LT": 2, "LB": 3}
+# ROI 순서: DORGA box 기준 [RT, LT, RB, LB] (idx0=좌상, idx1=우상, idx2=좌하, idx3=우하)
+ROI_MAPPING = {"RT": 0, "LT": 1, "RB": 2, "LB": 3}
 
 
 # ════════════════════════════════════════════════
@@ -299,9 +299,10 @@ def copy_inference_list(inference_list_val):
     return [list(inference) for inference in inference_list_val]
 
 
-def update_dropdown_default(click_info, inference_list, inference_list_edit):
+def update_dropdown_default(click_info, inference_list, inference_list_edit,
+                            posthoc_flag=False, inference_list_posthoc=None):
     if click_info == "Unknown" or not inference_list_edit:
-        return "0"
+        return "0", ""
     try:
         parts = click_info.split(",")
         image_str = parts[0].strip()
@@ -313,10 +314,15 @@ def update_dropdown_default(click_info, inference_list, inference_list_edit):
         score_str = str(current_score)
         if current_score != original_score:
             score_str += "*"
-        return score_str
+        # 정보 텍스트: AI 원본 + posthoc (있으면)
+        info = f"AI: {original_score}"
+        if posthoc_flag and inference_list_posthoc and image_idx < len(inference_list_posthoc):
+            ph_score = inference_list_posthoc[image_idx][region_idx]
+            info += f"  |  Post-hoc: {ph_score}"
+        return score_str, info
     except Exception as e:
         print("update_dropdown_default error:", e)
-        return "0"
+        return "0", ""
 
 
 def update_score(new_score, click_info, inference_list_edit):
@@ -358,7 +364,7 @@ def update_graph(inference_list, inference_list_edit, click_info, selected_indic
 
     plt.close('all')
 
-    roi_names = ['RT', 'RB', 'LT', 'LB']
+    roi_names = ['RT', 'LT', 'RB', 'LB']
     n_imgs = len(inference_list)
     xs = list(range(1, n_imgs + 1))
 
@@ -653,7 +659,8 @@ def _clean_gallery_label(label: str) -> str:
 
 
 def export_npy(inference_list, inference_list_edit,
-               ext_pid, user_id_input, gallery, orgn_img_list, file_names=None):
+               ext_pid, user_id_input, gallery, orgn_img_list, file_names=None,
+               inference_list_posthoc=None):
 
     patient_id = _safe(ext_pid.split("Patient ID:")[-1]) if "Patient ID:" in ext_pid else _safe(ext_pid)
     user_id = _safe(user_id_input or "Unknown") or "Unknown"
@@ -692,6 +699,7 @@ def export_npy(inference_list, inference_list_edit,
         "original_images": list(orgn_img_list or []),
         "inference":       inference_list,
         "inference_edit":  inference_list_edit,
+        "inference_posthoc": inference_list_posthoc,
     }
     np.savez(npz_path, **export_data)
     print(f"[NPZ] saved → {npz_path}")
@@ -699,7 +707,7 @@ def export_npy(inference_list, inference_list_edit,
     excel_path = os.path.join(BASE_DIR, "roi_export.xlsx")
     columns = ["PatientID", "UserID", "Timestamp"]
     for i in range(1, 21):
-        columns += [f"RT{i}", f"RB{i}", f"LT{i}", f"LB{i}"]
+        columns += [f"RT{i}", f"LT{i}", f"RB{i}", f"LB{i}"]
 
     def _row(scores, label):
         row = [patient_id, label, now.strftime("%Y-%m-%d %H:%M:%S")]
@@ -715,6 +723,8 @@ def export_npy(inference_list, inference_list_edit,
         _row(inference_list, "Original"),
         _row(inference_list_edit, user_id),
     ]
+    if inference_list_posthoc:
+        rows_new.append(_row(inference_list_posthoc, "Post-hoc"))
     df_new = pd.DataFrame(rows_new, columns=columns)
 
     if os.path.exists(excel_path):

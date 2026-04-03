@@ -258,7 +258,7 @@ def do_toggle_posthoc(logits_state, posthoc_flag, inference_list, inference_list
 
     fig = update_graph(inference_list, inference_list_edit, popup_click_info,
                        selected_indices, active_posthoc)
-    btn_label = "[ P ]" if new_flag else "P"
+    btn_label = "[ Post-hoc ]" if new_flag else "Post-hoc"
     return (imgs[0], imgs[1], imgs[2], imgs[3],
             new_flag, posthoc_list, fig, gr.update(value=btn_label))
 
@@ -312,7 +312,7 @@ with gr.Blocks(css=css) as demo:
                 ext_str = gr.Markdown(value="File Format: Unknown")
                 ext_cnt = gr.Markdown(value="File Count: Unknown")
                 overlay_button = gr.Button("O", elem_id="overlay-button")
-                posthoc_button = gr.Button("P", elem_id="posthoc-button")
+                posthoc_button = gr.Button("Post-hoc", elem_id="posthoc-button")
                 reset_button = gr.Button("Reset", elem_id="reset-button")
                 export_button = gr.Button("Export")
             with gr.Row(max_height=400):
@@ -507,7 +507,7 @@ with gr.Blocks(css=css) as demo:
     # Export
     export_button.click(
         fn=export_npy,
-        inputs=[inference_list, inference_list_edit, patient_id_info, user_id_input, gallery, orgn_img_list, file_names_state],
+        inputs=[inference_list, inference_list_edit, patient_id_info, user_id_input, gallery, orgn_img_list, file_names_state, inference_list_posthoc],
         outputs=[],
     )
 
