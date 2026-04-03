@@ -133,8 +133,8 @@ def on_select_gallery(gallery, img_list, datetime_list, selected_indices, evt: g
 
 def inference_overlay(image1, image2, image3, image4, orgn_img_list,
                       overlay_flag, selected_indices, inference_list,
-                      posthoc_flag=False, inference_list_posthoc=None):
-    display_inf = inference_list_posthoc if (posthoc_flag and inference_list_posthoc) else inference_list
+                      inference_list_posthoc=None):
+    display_inf = inference_list_posthoc if inference_list_posthoc else inference_list
     new_images = [None, None, None, None]
     if len(selected_indices) == 0:
         return image1, image2, image3, image4, overlay_flag
@@ -191,8 +191,8 @@ def safe_copy_image(img, fallback=None):
 
 def get_adjusted_clean_image(first_img, idx, placeholder_img,
                              orgn_img_list, inference_list, overlay_flag,
-                             posthoc_flag=False, inference_list_posthoc=None):
-    display_inf = inference_list_posthoc if (posthoc_flag and inference_list_posthoc) else inference_list
+                             inference_list_posthoc=None):
+    display_inf = inference_list_posthoc if inference_list_posthoc else inference_list
     if overlay_flag:
         processed = inference_with_overlay(orgn_img_list, display_inf, idx, idx)
         if processed and len(processed) > 0:
@@ -212,7 +212,7 @@ def _on_image_click(slot_index,
                     first_image1, first_image2, first_image3, first_image4,
                     overlay_flag, selected_indices, click_info,
                     orgn_img_list, inference_list,
-                    posthoc_flag, inference_list_posthoc, evt: gr.SelectData):
+                    inference_list_posthoc, evt: gr.SelectData):
     x, y = evt.index
     quadrant_label = get_quadrant_label(x, y, 512, 512)
 
@@ -225,7 +225,7 @@ def _on_image_click(slot_index,
         fresh.append(get_adjusted_clean_image(
             firsts[pos], idx, images[pos],
             orgn_img_list, inference_list, overlay_flag,
-            posthoc_flag, inference_list_posthoc
+            inference_list_posthoc
         ))
 
     used_idx = selected_indices[slot_index] if slot_index < len(selected_indices) else 0
@@ -246,48 +246,48 @@ def on_image1_click(image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
                     overlay_flag, selected_indices, click_info,
                     orgn_img_list, inference_list,
-                    posthoc_flag, inference_list_posthoc, evt: gr.SelectData):
+                    inference_list_posthoc, evt: gr.SelectData):
     return _on_image_click(0, image1, image2, image3, image4,
                            first_image1, first_image2, first_image3, first_image4,
                            overlay_flag, selected_indices, click_info,
                            orgn_img_list, inference_list,
-                           posthoc_flag, inference_list_posthoc, evt)
+                           inference_list_posthoc, evt)
 
 
 def on_image2_click(image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
                     overlay_flag, selected_indices, click_info,
                     orgn_img_list, inference_list,
-                    posthoc_flag, inference_list_posthoc, evt: gr.SelectData):
+                    inference_list_posthoc, evt: gr.SelectData):
     return _on_image_click(1, image1, image2, image3, image4,
                            first_image1, first_image2, first_image3, first_image4,
                            overlay_flag, selected_indices, click_info,
                            orgn_img_list, inference_list,
-                           posthoc_flag, inference_list_posthoc, evt)
+                           inference_list_posthoc, evt)
 
 
 def on_image3_click(image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
                     overlay_flag, selected_indices, click_info,
                     orgn_img_list, inference_list,
-                    posthoc_flag, inference_list_posthoc, evt: gr.SelectData):
+                    inference_list_posthoc, evt: gr.SelectData):
     return _on_image_click(2, image1, image2, image3, image4,
                            first_image1, first_image2, first_image3, first_image4,
                            overlay_flag, selected_indices, click_info,
                            orgn_img_list, inference_list,
-                           posthoc_flag, inference_list_posthoc, evt)
+                           inference_list_posthoc, evt)
 
 
 def on_image4_click(image1, image2, image3, image4,
                     first_image1, first_image2, first_image3, first_image4,
                     overlay_flag, selected_indices, click_info,
                     orgn_img_list, inference_list,
-                    posthoc_flag, inference_list_posthoc, evt: gr.SelectData):
+                    inference_list_posthoc, evt: gr.SelectData):
     return _on_image_click(3, image1, image2, image3, image4,
                            first_image1, first_image2, first_image3, first_image4,
                            overlay_flag, selected_indices, click_info,
                            orgn_img_list, inference_list,
-                           posthoc_flag, inference_list_posthoc, evt)
+                           inference_list_posthoc, evt)
 
 
 # ════════════════════════════════════════════════
@@ -300,7 +300,7 @@ def copy_inference_list(inference_list_val):
 
 
 def update_dropdown_default(click_info, inference_list, inference_list_edit,
-                            posthoc_flag=False, inference_list_posthoc=None):
+                            inference_list_posthoc=None):
     if click_info == "Unknown" or not inference_list_edit:
         return "0", ""
     try:
@@ -316,7 +316,7 @@ def update_dropdown_default(click_info, inference_list, inference_list_edit,
             score_str += "*"
         # 정보 텍스트: AI 원본 + posthoc (있으면)
         info = f"AI: {original_score}"
-        if posthoc_flag and inference_list_posthoc and image_idx < len(inference_list_posthoc):
+        if inference_list_posthoc and image_idx < len(inference_list_posthoc):
             ph_score = inference_list_posthoc[image_idx][region_idx]
             info += f"  |  Post-hoc: {ph_score}"
         return score_str, info
@@ -341,41 +341,17 @@ def update_score(new_score, click_info, inference_list_edit):
     return inference_list_edit
 
 
-# ════════════════════════════════════════════════
-# Post-hoc Markov 토글
-# ════════════════════════════════════════════════
-
-def toggle_posthoc(logits_state, posthoc_flag):
-    new_flag = not posthoc_flag
-    if new_flag and logits_state is not None:
-        posthoc_list = apply_posthoc_correction(logits_state)
-        return posthoc_list, new_flag
-    return None, new_flag
-
 
 # ════════════════════════════════════════════════
 # 그래프
 # ════════════════════════════════════════════════
 
-def update_graph(inference_list, inference_list_edit, click_info, selected_indices,
-                 inference_list_posthoc=None):
-    if not inference_list:
-        return None
-
-    plt.close('all')
-
+def _build_graph(series_list, n_imgs, xs, selected_indices, upd_i, upd_roi):
+    """
+    series_list: [(values_per_image, label, color, style, zorder), ...]
+      values_per_image: list of list [[roi0, roi1, roi2, roi3], ...] or None
+    """
     roi_names = ['RT', 'LT', 'RB', 'LB']
-    n_imgs = len(inference_list)
-    xs = list(range(1, n_imgs + 1))
-
-    upd_i = upd_roi = None
-    if click_info != "Unknown":
-        try:
-            img_str, roi_str = [p.strip() for p in click_info.split(",")]
-            upd_i = int(img_str.split(" ")[1]) - 1
-            upd_roi = ROI_MAPPING.get(roi_str)
-        except:
-            pass
 
     fig = plt.figure(figsize=(16, 6))
     gs = gridspec.GridSpec(3, 2, height_ratios=[1.2, 1, 1])
@@ -387,26 +363,25 @@ def update_graph(inference_list, inference_list_edit, click_info, selected_indic
     handles, labels = [], []
 
     # ── Total ──
-    tot_ai = [sum(r) for r in inference_list]
-    tot_edit = ([sum(r) for r in inference_list_edit]
-                if inference_list_edit and len(inference_list_edit) == n_imgs else None)
-    tot_posthoc = ([sum(r) for r in inference_list_posthoc]
-                   if inference_list_posthoc and len(inference_list_posthoc) == n_imgs else None)
-
     axT.set_facecolor("#0F0F11")
-    if tot_posthoc:
-        axT.plot(xs, tot_posthoc, 's-', ms=4, lw=1.2, color='#00FF88', label="Total Post-Hoc", zorder=4)
-    else:
-        axT.plot(xs, tot_ai, 's-', ms=4, lw=1.2, color='#00FFFF', label="Total AI", zorder=3)
-    if tot_edit:
-        axT.plot(xs, tot_edit, 's--', ms=4, lw=1.2, color='#E26114', label="Total Edit", zorder=2)
+    first_vals = None
+    for data, label, color, style, zorder in series_list:
+        if data and len(data) == n_imgs:
+            tot = [sum(r) for r in data]
+            axT.plot(xs, tot, f's{style}', ms=4, lw=1.2, color=color, label=f"Total {label}", zorder=zorder)
+            if first_vals is None:
+                first_vals = tot
 
-    if tot_edit and upd_i is not None:
-        axT.scatter(upd_i + 1, tot_edit[upd_i], s=60, color="#FF00FF", zorder=5)
-    tot_base = tot_posthoc or tot_ai
+    if upd_i is not None:
+        for data, label, color, style, zorder in series_list:
+            if data and len(data) == n_imgs and style == '--':
+                tot = [sum(r) for r in data]
+                axT.scatter(upd_i + 1, tot[upd_i], s=60, color="#FF00FF", zorder=5)
+                break
+
     for sel in selected_indices or []:
-        if isinstance(sel, int) and 0 <= sel < n_imgs:
-            y = tot_edit[sel] if tot_edit else tot_base[sel]
+        if isinstance(sel, int) and 0 <= sel < n_imgs and first_vals:
+            y = first_vals[sel]
             axT.annotate("", xy=(sel + 1, y), xytext=(sel + 1, y + 1),
                          arrowprops=dict(arrowstyle="->", color="red", lw=2))
 
@@ -421,33 +396,22 @@ def update_graph(inference_list, inference_list_edit, click_info, selected_indic
     # ── 각 ROI ──
     for i, (ax, name) in enumerate(zip(axRois, roi_names)):
         ax.set_facecolor("#0F0F11")
-        ai_vals = [row[i] for row in inference_list]
-        ed_vals = ([row[i] for row in inference_list_edit]
-                   if inference_list_edit and len(inference_list_edit) == n_imgs else None)
-        ph_vals = ([row[i] for row in inference_list_posthoc]
-                   if inference_list_posthoc and len(inference_list_posthoc) == n_imgs else None)
+        first_roi = None
+        for data, label, color, style, zorder in series_list:
+            if data and len(data) == n_imgs:
+                vals = [row[i] for row in data]
+                h, = ax.plot(xs, vals, f'o{style}', ms=3, lw=1, color=color, label=label, zorder=zorder)
+                handles.append(h)
+                labels.append(label)
+                if first_roi is None:
+                    first_roi = vals
+                if style == '--' and upd_roi == i and upd_i is not None:
+                    ax.scatter(upd_i + 1, vals[upd_i], color='#FF00FF', s=40, zorder=5)
 
-        if ph_vals:
-            h1, = ax.plot(xs, ph_vals, 'o-', ms=3, lw=1, color='#00FF88', label="Post-Hoc", zorder=4)
-            handles.append(h1)
-            labels.append("Post-Hoc")
-        else:
-            h1, = ax.plot(xs, ai_vals, 'o-', ms=3, lw=1, color='#00FFFF', label="AI Inference", zorder=3)
-            handles.append(h1)
-            labels.append("AI Inference")
-
-        if ed_vals:
-            h2, = ax.plot(xs, ed_vals, 'o--', ms=3, lw=1, color='#E26114', label="User Edit", zorder=2)
-            handles.append(h2)
-            labels.append("User Edit")
-            if upd_roi == i and upd_i is not None:
-                ax.scatter(upd_i + 1, ed_vals[upd_i], color='#FF00FF', s=40, zorder=5)
-
-        base_vals = ph_vals or ai_vals
         for sel in selected_indices or []:
-            if isinstance(sel, int) and 0 <= sel < n_imgs:
-                y = ed_vals[sel] if ed_vals else base_vals[sel]
-                ax.annotate("", xy=(sel + 1, y), xytext=(sel + 1, y + 0.5),
+            if isinstance(sel, int) and 0 <= sel < n_imgs and first_roi:
+                ax.annotate("", xy=(sel + 1, first_roi[sel]),
+                            xytext=(sel + 1, first_roi[sel] + 0.5),
                             arrowprops=dict(arrowstyle="->", color="red", lw=2))
 
         ax.set_title(name, color='white')
@@ -463,21 +427,65 @@ def update_graph(inference_list, inference_list_edit, click_info, selected_indic
             sp.set_color("white")
 
     # ── 범례 ──
-    order = ["AI Inference", "Post-Hoc", "User Edit"]
     uniq = {}
-    for lbl in order:
-        for h, l in zip(handles, labels):
-            if l == lbl and l not in uniq:
-                uniq[l] = h
-    legend = fig.legend(list(uniq.values()), list(uniq.keys()),
-                        loc='upper center', bbox_to_anchor=(0.5, 0.94), ncol=3,
-                        frameon=False)
-    for t in legend.get_texts():
-        t.set_color("white")
+    for h, l in zip(handles, labels):
+        if l not in uniq:
+            uniq[l] = h
+    if uniq:
+        legend = fig.legend(list(uniq.values()), list(uniq.keys()),
+                            loc='upper center', bbox_to_anchor=(0.5, 0.94),
+                            ncol=len(uniq), frameon=False)
+        for t in legend.get_texts():
+            t.set_color("white")
 
     fig.tight_layout(pad=0.6)
     fig.subplots_adjust(top=0.88)
     return fig
+
+
+def update_graphs(inference_list, inference_list_edit, click_info, selected_indices,
+                  inference_list_posthoc=None):
+    if not inference_list:
+        return None, None, None
+
+    plt.close('all')
+
+    n_imgs = len(inference_list)
+    xs = list(range(1, n_imgs + 1))
+
+    upd_i = upd_roi = None
+    if click_info != "Unknown":
+        try:
+            img_str, roi_str = [p.strip() for p in click_info.split(",")]
+            upd_i = int(img_str.split(" ")[1]) - 1
+            upd_roi = ROI_MAPPING.get(roi_str)
+        except:
+            pass
+
+    ed = inference_list_edit if (inference_list_edit and len(inference_list_edit) == n_imgs) else None
+    ph = inference_list_posthoc if (inference_list_posthoc and len(inference_list_posthoc) == n_imgs) else None
+
+    # Tab 1: AI - User Edit
+    s1 = [(inference_list, "AI Inference", "#00FFFF", "-", 3)]
+    if ed:
+        s1.append((ed, "User Edit", "#E26114", "--", 2))
+    fig1 = _build_graph(s1, n_imgs, xs, selected_indices, upd_i, upd_roi)
+
+    # Tab 2: Post-hoc - User Edit
+    s2 = []
+    if ph:
+        s2.append((ph, "Post-Hoc", "#00FF88", "-", 4))
+    if ed:
+        s2.append((ed, "User Edit", "#E26114", "--", 2))
+    fig2 = _build_graph(s2, n_imgs, xs, selected_indices, upd_i, upd_roi) if s2 else None
+
+    # Tab 3: AI - Post-hoc
+    s3 = [(inference_list, "AI Inference", "#00FFFF", "-", 3)]
+    if ph:
+        s3.append((ph, "Post-Hoc", "#00FF88", "-", 4))
+    fig3 = _build_graph(s3, n_imgs, xs, selected_indices, upd_i, upd_roi) if ph else None
+
+    return fig1, fig2, fig3
 
 
 # ════════════════════════════════════════════════
@@ -520,8 +528,8 @@ def ensure_four(img_list, fallback):
 
 def refresh_main_images(orgn_img_list, inference_list, selected_indices,
                         overlay_flag, popup_click_info,
-                        posthoc_flag=False, inference_list_posthoc=None):
-    display_inf = inference_list_posthoc if (posthoc_flag and inference_list_posthoc) else inference_list
+                        inference_list_posthoc=None):
+    display_inf = inference_list_posthoc if inference_list_posthoc else inference_list
     new_main_images = [None, None, None, None]
     if not selected_indices or len(selected_indices) == 0:
         return new_main_images
@@ -564,12 +572,12 @@ def refresh_main_images(orgn_img_list, inference_list, selected_indices,
 
 def toggle_overlay(orgn_img_list, inference_list, selected_indices,
                    popup_click_info, overlay_flag,
-                   posthoc_flag=False, inference_list_posthoc=None):
+                   inference_list_posthoc=None):
     new_overlay_flag = not overlay_flag
     main_images = refresh_main_images(
         orgn_img_list, inference_list, selected_indices,
         new_overlay_flag, popup_click_info,
-        posthoc_flag, inference_list_posthoc
+        inference_list_posthoc
     )
     btn_label = "[ O ]" if new_overlay_flag else "O"
     return (
@@ -616,6 +624,7 @@ def reset_page():
         # ⑦ Popup
         gr.update(value="Unknown"),     # popup_click_info
         gr.update(value="0"),           # popup_score_edit
+        gr.update(value=""),            # popup_ref_info
 
         # ⑧ 하단 마크다운·Textbox
         gr.update(value="File Format: Unknown"),  # ext_str
@@ -627,7 +636,6 @@ def reset_page():
         gr.update(value=False),   # file_is_npz_state
         gr.update(value=None),    # logits_state
         gr.update(value=None),    # inference_list_posthoc
-        gr.update(value=False),   # posthoc_flag
         gr.update(value=[]),      # file_names_state
     )
 

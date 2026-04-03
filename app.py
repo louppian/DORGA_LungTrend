@@ -194,6 +194,7 @@ def process_upload(files):
         result = files_info(files)
         # result: gallery_display, origin_items, inference_list, logits_np, datetimes, ext_info, cnt_info, pid_info, file_names
         logits_np = result[3]
+        posthoc_list = apply_posthoc_correction(logits_np, result[2]) if logits_np is not None else None
         return (
             result[0],                        # gallery
             result[1],                        # orgn_img_list
@@ -210,7 +211,7 @@ def process_upload(files):
             False,                             # file_is_npz
             result[2],                        # inference_edit
             [],
-            None,                             # inference_list_posthoc (P 버튼 시 계산)
+            posthoc_list,                     # inference_list_posthoc (초기 자동 계산)
             result[8],                        # file_names_state
         )
 
@@ -227,19 +228,16 @@ def conditional_copy_inference_list(inference_list_val, inference_edit_val, file
         return inference_list_val
 
 
-def do_toggle_posthoc(logits_state, posthoc_flag, inference_list, inference_list_posthoc,
-                      inference_list_edit, popup_click_info, selected_indices,
+def do_update_posthoc(logits_state, inference_list, inference_list_edit,
+                      popup_click_info, selected_indices,
                       orgn_img_list, overlay_flag):
-    new_flag = not posthoc_flag
-
-    # P ON → user edit를 history로 사용하여 보정 재계산
-    if new_flag and logits_state is not None and inference_list_edit:
+    # user edit 기반으로 posthoc 재계산
+    if logits_state is not None and inference_list_edit:
         posthoc_list = apply_posthoc_correction(np.array(logits_state), inference_list_edit)
     else:
-        posthoc_list = inference_list_posthoc
+        posthoc_list = None
 
-    active_posthoc = posthoc_list if new_flag else None
-    display_inference = active_posthoc if active_posthoc else inference_list
+    display_inference = posthoc_list if posthoc_list else inference_list
 
     # 이미지 갱신
     imgs = [None, None, None, None]
@@ -249,18 +247,15 @@ def do_toggle_posthoc(logits_state, posthoc_flag, inference_list, inference_list
                 break
             processed = inference_with_overlay(orgn_img_list, display_inference, idx, idx)
             imgs[pos] = processed[0] if processed and len(processed) > 0 else orgn_img_list[idx]
-
     elif selected_indices and orgn_img_list:
         for pos, idx in enumerate(selected_indices):
             if pos >= 4:
                 break
             imgs[pos] = orgn_img_list[idx]
 
-    fig = update_graph(inference_list, inference_list_edit, popup_click_info,
-                       selected_indices, active_posthoc)
-    btn_label = "[ Post-hoc ]" if new_flag else "Post-hoc"
-    return (imgs[0], imgs[1], imgs[2], imgs[3],
-            new_flag, posthoc_list, fig, gr.update(value=btn_label))
+    fig1, fig2, fig3 = update_graphs(inference_list, inference_list_edit, popup_click_info,
+                                      selected_indices, posthoc_list)
+    return imgs[0], imgs[1], imgs[2], imgs[3], posthoc_list, fig1, fig2, fig3
 
 
 # ════════════════════════════════════════════════
@@ -283,7 +278,6 @@ with gr.Blocks(css=css) as demo:
     file_is_npz_state = gr.State(value=False)
     logits_state = gr.State(value=None)
     inference_list_posthoc = gr.State(value=None)
-    posthoc_flag = gr.State(value=False)
     file_names_state = gr.State(value=[])
 
     # ── 업로드 섹션 ──
@@ -322,12 +316,18 @@ with gr.Blocks(css=css) as demo:
                 image2 = gr.Image(show_label=False, show_download_button=False, show_fullscreen_button=False, sources=[], elem_id='main-image')
                 image3 = gr.Image(show_label=False, show_download_button=False, show_fullscreen_button=False, sources=[], elem_id='main-image')
                 image4 = gr.Image(show_label=False, show_download_button=False, show_fullscreen_button=False, sources=[], elem_id='main-image')
-            with gr.Row(visible=True):
-                graph = gr.Plot(label="Graph", show_label=False, elem_id="graph")
+            with gr.Tabs():
+                with gr.Tab("AI - User Edit"):
+                    graph_ai_edit = gr.Plot(show_label=False, elem_id="graph")
+                with gr.Tab("Post-hoc - User Edit"):
+                    graph_ph_edit = gr.Plot(show_label=False, elem_id="graph-ph")
+                with gr.Tab("AI - Post-hoc"):
+                    graph_ai_ph = gr.Plot(show_label=False, elem_id="graph-aiph")
 
     # ── 팝업 ──
     with gr.Column(visible=False, elem_id="popup-container") as popup:
         popup_click_info = gr.Textbox(label="Selected Region", value="Unknown")
+        popup_ref_info = gr.Markdown(value="")
         popup_score_edit = gr.Dropdown(
             ["0", "1", "2", "3", "4"], allow_custom_value=True, label="Score Edit"
         )
@@ -366,10 +366,10 @@ with gr.Blocks(css=css) as demo:
         outputs=inference_list_edit,
     )
     inference_list.change(
-        update_graph,
+        update_graphs,
         inputs=[inference_list, inference_list_edit, popup_click_info, selected_indices,
                 inference_list_posthoc],
-        outputs=[graph],
+        outputs=[graph_ai_edit, graph_ph_edit, graph_ai_ph],
     )
 
     # 갤러리 선택 → 메인 이미지 업데이트 → 오버레이 → first_image 캐싱 → 그래프
@@ -383,7 +383,7 @@ with gr.Blocks(css=css) as demo:
             image1, image2, image3, image4,
             orgn_img_list,
             overlay_flag, selected_indices, inference_list,
-            posthoc_flag, inference_list_posthoc
+            inference_list_posthoc
         ],
         outputs=[image1, image2, image3, image4, overlay_flag],
     ).then(
@@ -396,10 +396,10 @@ with gr.Blocks(css=css) as demo:
         inputs=[image1, image2, image3, image4, selected_indices, orgn_img_list],
         outputs=[first_image1, first_image2, first_image3, first_image4],
     ).then(
-        fn=update_graph,
+        fn=update_graphs,
         inputs=[inference_list, inference_list_edit, popup_click_info, selected_indices,
                 inference_list_posthoc],
-        outputs=[graph],
+        outputs=[graph_ai_edit, graph_ph_edit, graph_ai_ph],
     )
 
     # 이미지 클릭 → 팝업 표시
@@ -414,7 +414,7 @@ with gr.Blocks(css=css) as demo:
                 first_image1, first_image2, first_image3, first_image4,
                 overlay_flag, selected_indices, popup_click_info,
                 orgn_img_list, inference_list,
-                posthoc_flag, inference_list_posthoc,
+                inference_list_posthoc,
             ],
             outputs=[
                 popup_click_info,
@@ -434,8 +434,9 @@ with gr.Blocks(css=css) as demo:
         outputs=[inference_list_edit],
     ).then(
         fn=update_dropdown_default,
-        inputs=[popup_click_info, inference_list, inference_list_edit],
-        outputs=[popup_score_edit],
+        inputs=[popup_click_info, inference_list, inference_list_edit,
+                inference_list_posthoc],
+        outputs=[popup_score_edit, popup_ref_info],
     ).then(
         fn=lambda: gr.update(visible=False),
         inputs=[],
@@ -454,27 +455,28 @@ with gr.Blocks(css=css) as demo:
         inputs=[
             orgn_img_list, inference_list, selected_indices,
             popup_click_info, overlay_flag,
-            posthoc_flag, inference_list_posthoc,
+            inference_list_posthoc,
         ],
         outputs=[image1, image2, image3, image4, overlay_flag, overlay_button],
     )
 
-    # Post-hoc Markov 토글
+    # Post-hoc 업데이트
     posthoc_button.click(
-        fn=do_toggle_posthoc,
+        fn=do_update_posthoc,
         inputs=[
-            logits_state, posthoc_flag, inference_list, inference_list_posthoc,
-            inference_list_edit, popup_click_info, selected_indices,
+            logits_state, inference_list, inference_list_edit,
+            popup_click_info, selected_indices,
             orgn_img_list, overlay_flag,
         ],
-        outputs=[image1, image2, image3, image4, posthoc_flag, inference_list_posthoc, graph, posthoc_button],
+        outputs=[image1, image2, image3, image4, inference_list_posthoc, graph_ai_edit, graph_ph_edit, graph_ai_ph],
     )
 
     # 팝업 값 변경
     popup_click_info.change(
         fn=update_dropdown_default,
-        inputs=[popup_click_info, inference_list, inference_list_edit],
-        outputs=[popup_score_edit],
+        inputs=[popup_click_info, inference_list, inference_list_edit,
+                inference_list_posthoc],
+        outputs=[popup_score_edit, popup_ref_info],
     )
 
     popup_score_edit.change(
@@ -483,25 +485,26 @@ with gr.Blocks(css=css) as demo:
         outputs=inference_list_edit,
     ).then(
         fn=update_dropdown_default,
-        inputs=[popup_click_info, inference_list, inference_list_edit],
-        outputs=[popup_score_edit],
+        inputs=[popup_click_info, inference_list, inference_list_edit,
+                inference_list_posthoc],
+        outputs=[popup_score_edit, popup_ref_info],
     )
 
     def recalc_posthoc_and_graph(inference_list, inference_list_edit, popup_click_info,
-                                 selected_indices, logits_state, posthoc_flag):
-        """user edit 변경 시 posthoc 재계산 + 그래프 갱신"""
+                                 selected_indices, logits_state, inference_list_posthoc):
+        """user edit 변경 시 posthoc이 이미 있으면 재계산 + 그래프 갱신"""
         posthoc_list = None
-        if posthoc_flag and logits_state is not None and inference_list_edit:
+        if inference_list_posthoc and logits_state is not None and inference_list_edit:
             posthoc_list = apply_posthoc_correction(np.array(logits_state), inference_list_edit)
-        fig = update_graph(inference_list, inference_list_edit, popup_click_info,
-                           selected_indices, posthoc_list)
-        return posthoc_list, fig
+        fig1, fig2, fig3 = update_graphs(inference_list, inference_list_edit, popup_click_info,
+                                          selected_indices, posthoc_list)
+        return posthoc_list, fig1, fig2, fig3
 
     inference_list_edit.change(
         fn=recalc_posthoc_and_graph,
         inputs=[inference_list, inference_list_edit, popup_click_info, selected_indices,
-                logits_state, posthoc_flag],
-        outputs=[inference_list_posthoc, graph],
+                logits_state, inference_list_posthoc],
+        outputs=[inference_list_posthoc, graph_ai_edit, graph_ph_edit, graph_ai_ph],
     )
 
     # Export
@@ -524,11 +527,11 @@ with gr.Blocks(css=css) as demo:
             first_image1, first_image2, first_image3, first_image4,  # 11~14
             patient_id_info,                                # 15
             inference_list, inference_list_edit,             # 16~17
-            popup_click_info, popup_score_edit,              # 18~19
+            popup_click_info, popup_score_edit, popup_ref_info,  # 18~20
             ext_str, ext_cnt, ext_pid,                      # 20~22
             user_id_input,                                  # 23
             overlay_flag, file_is_npz_state,                # 24~25
-            logits_state, inference_list_posthoc, posthoc_flag,  # 26~28
+            logits_state, inference_list_posthoc,                # 26~27
             file_names_state,                               # 29
         ],
     )
